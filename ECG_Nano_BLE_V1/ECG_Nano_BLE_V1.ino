@@ -3,11 +3,12 @@
 
 #define HEART_SERVICE_UUID        "180D"
 
-#define HEART_RATE_UUID          "2A37" // Standard Heart Rate Measurement
-#define HRV_UUID                 "2B90" // Custom UUID for HRV
-#define HRMAD10_UUID            "2B91" // Custom UUID for HRMAD10
-#define HRMAD30_UUID            "2B92" // Custom UUID for HRMAD30
-#define HRMAD60_UUID            "2B93" // Custom UUID for HRMAD60
+#define HEART_RATE_UUID          "2B90" // Standard Heart Rate Measurement
+#define HRV_UUID                 "2B91" // Custom UUID for HRV
+#define HRMAD10_UUID            "2B92" // Custom UUID for HRMAD10
+#define HRMAD30_UUID            "2B93" // Custom UUID for HRMAD30
+#define HRMAD60_UUID            "2B94" // Custom UUID for HRMAD60
+#define ECG_UUID            "2B95" // Custom UUID for ECG
 
 BLEService heartService(HEART_SERVICE_UUID);
 // Define characteristics - using float for precision
@@ -16,6 +17,7 @@ BLEFloatCharacteristic hrvChar(HRV_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic hrMad10Char(HRMAD10_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic hrMad30Char(HRMAD30_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic hrMad60Char(HRMAD60_UUID, BLERead | BLENotify);
+BLEFloatCharacteristic ecgChar(ECG_UUID, BLERead | BLENotify);
 
 // Pin definition
 const int ecgPin = A0; // Analog pin where ECG signal is read
@@ -49,6 +51,8 @@ int bufferCount10 = 0, bufferCount30 = 0, bufferCount60 = 0;
 void setup() {
   Serial.begin(9600);
   pinMode(ecgPin, INPUT);
+  pinMode(loPlusPin, INPUT);
+  pinMode(loMinusPin, INPUT);
 
   while (!Serial);
 
@@ -57,6 +61,8 @@ void setup() {
     Serial.println("Starting BLE failed!");
     while (1);
   }
+
+  Serial.println(BLE.address());
 
   // Set the local name and advertised service
   BLE.setLocalName("Safit");
@@ -68,6 +74,7 @@ void setup() {
   heartService.addCharacteristic(hrMad10Char);
   heartService.addCharacteristic(hrMad30Char);
   heartService.addCharacteristic(hrMad60Char);
+  heartService.addCharacteristic(ecgChar);
 
   // Set initial values for characteristics
   heartRateChar.writeValue(0.0);
@@ -75,6 +82,7 @@ void setup() {
   hrMad10Char.writeValue(0.0);
   hrMad30Char.writeValue(0.0);
   hrMad60Char.writeValue(0.0);
+  ecgChar.writeValue(0.0);
 
   // Add the service
   BLE.addService(heartService);
@@ -91,6 +99,13 @@ void loop() {
     Serial.println(central.address());
 
     while (central.connected()) {
+      bool leadOffDetected = digitalRead(loPlusPin) == HIGH || digitalRead(loMinusPin) == HIGH;
+
+      // if (leadOffDetected) {
+      //   Serial.println("Check electrode connections.");
+      //   continue;
+      // }
+  
       int ecgValue = analogRead(ecgPin);  // Read ECG signal from AD8232
 
       // Simple peak detection
@@ -134,11 +149,12 @@ void loop() {
           Serial.println(hrmad60);
 
           // Write values to BLE characteristics
-          heartRateChar.writeValue((float)heartRate);
-          hrvChar.writeValue(hrv);
-          hrMad10Char.writeValue(hrmad10);  // Using HRMAD for 10-second window
-          hrMad30Char.writeValue(hrmad30);  // Using HRMAD for 30-second window
-          hrMad60Char.writeValue(hrmad60);  // Using HRMAD for 60-second window
+          heartRateChar.writeValue(heartRate);
+          hrvChar.writeValue(hrv * 100);
+          hrMad10Char.writeValue(hrmad10 * 100);  // Using HRMAD for 10-second window
+          hrMad30Char.writeValue(hrmad30 * 100);  // Using HRMAD for 30-second window
+          hrMad60Char.writeValue(hrmad60 * 100);  // Using HRMAD for 60-second window
+          hrMad60Char.writeValue(ecgValue);
         }
       }
 
