@@ -1,23 +1,25 @@
 #include <Arduino.h>
 #include <ArduinoBLE.h>
 
-#define HEART_SERVICE_UUID        "180D"
-
-#define HEART_RATE_UUID          "2B90" // Standard Heart Rate Measurement
-#define HRV_UUID                 "2B91" // Custom UUID for HRV
-#define HRMAD10_UUID            "2B92" // Custom UUID for HRMAD10
-#define HRMAD30_UUID            "2B93" // Custom UUID for HRMAD30
-#define HRMAD60_UUID            "2B94" // Custom UUID for HRMAD60
-#define ECG_UUID            "2B95" // Custom UUID for ECG
+#define HEART_SERVICE_UUID        "0000180d-0000-1000-8000-00805f9b34fb"
+#define HEART_RATE_UUID          "00002b90-0000-1000-8000-00805f9b34fb"
+#define HRV_UUID                 "00002b91-0000-1000-8000-00805f9b34fb"
+#define HRMAD10_UUID            "00002b92-0000-1000-8000-00805f9b34fb"
+#define HRMAD30_UUID            "00002b93-0000-1000-8000-00805f9b34fb"
+#define HRMAD60_UUID            "00002b94-0000-1000-8000-00805f9b34fb"
+#define ECG_UUID                "00002b95-0000-1000-8000-00805f9b34fb"
+#define LEADS_UUID                "00002b96-0000-1000-8000-00805f9b34fb"
 
 BLEService heartService(HEART_SERVICE_UUID);
-// Define characteristics - using float for precision
+
+// Define characteristics
 BLEFloatCharacteristic heartRateChar(HEART_RATE_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic hrvChar(HRV_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic hrMad10Char(HRMAD10_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic hrMad30Char(HRMAD30_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic hrMad60Char(HRMAD60_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic ecgChar(ECG_UUID, BLERead | BLENotify);
+BLEFloatCharacteristic leadsChar(LEADS_UUID, BLERead | BLENotify);
 
 // Pin definition
 const int ecgPin = A0; // Analog pin where ECG signal is read
@@ -75,6 +77,7 @@ void setup() {
   heartService.addCharacteristic(hrMad30Char);
   heartService.addCharacteristic(hrMad60Char);
   heartService.addCharacteristic(ecgChar);
+  heartService.addCharacteristic(leadsChar);
 
   // Set initial values for characteristics
   heartRateChar.writeValue(0.0);
@@ -83,6 +86,7 @@ void setup() {
   hrMad30Char.writeValue(0.0);
   hrMad60Char.writeValue(0.0);
   ecgChar.writeValue(0.0);
+  leadsChar.writeValue(0.0);
 
   // Add the service
   BLE.addService(heartService);
@@ -101,64 +105,66 @@ void loop() {
     while (central.connected()) {
       bool leadOffDetected = digitalRead(loPlusPin) == HIGH || digitalRead(loMinusPin) == HIGH;
 
-      // if (leadOffDetected) {
-      //   Serial.println("Check electrode connections.");
-      //   continue;
-      // }
-  
-      int ecgValue = analogRead(ecgPin);  // Read ECG signal from AD8232
+      if (leadOffDetected) {
+        leadsChar.writeValue(float(1.0));
+        continue;
+      } else {
+        leadsChar.writeValue(float(0.0));
+      }
+      
+      int ecgValue = analogRead(ecgPin);
 
-      // Simple peak detection
       if (ecgValue > threshold) {
         unsigned long currentTime = millis();
-        
-        // Detect the R-peak and calculate the time between beats (R-R interval)
         beatInterval = currentTime - lastBeatTime;
-        if (beatInterval > 300) {  // Avoid noise; set minimum R-R interval (~200 bpm)
+        
+        if (beatInterval > 300) {
           lastBeatTime = currentTime;
-          heartRate = 60000 / beatInterval;  // Convert R-R interval to bpm
+          heartRate = 60000 / beatInterval;
           
-          // Store the R-R interval
           rrIntervals[rrIndex] = beatInterval;
           rrIndex = (rrIndex + 1) % numRRIntervals;
           
-          // Print ECG value and HR
-          Serial.print("ECG Value: ");
-          Serial.print(ecgValue);
-          Serial.print("\tHeart Rate: ");
-          Serial.print(heartRate);
-          Serial.println(" bpm");
-          
+          // Update buffers
           updateHRBuffer(hrBuffer10, bufferSize10, index10, bufferCount10, heartRate);
           updateHRBuffer(hrBuffer30, bufferSize30, index30, bufferCount30, heartRate);
           updateHRBuffer(hrBuffer60, bufferSize60, index60, bufferCount60, heartRate);
 
-          // Calculate and print HRV, HRMAD10, HRMAD30, and HRMAD60
+          // Calculate metrics
           float hrv = calculateHRV(rrIntervals);
           float hrmad10 = calculateHRMAD(hrBuffer10, bufferCount10);
           float hrmad30 = calculateHRMAD(hrBuffer30, bufferCount30);
           float hrmad60 = calculateHRMAD(hrBuffer60, bufferCount60);
 
-          Serial.print("HRV: ");
-          Serial.println(hrv);
-          Serial.print("HRMAD10: ");
-          Serial.println(hrmad10);
-          Serial.print("HRMAD30: ");
-          Serial.println(hrmad30);
-          Serial.print("HRMAD60: ");
-          Serial.println(hrmad60);
+          // Debug print
+          Serial.print("HR: "); Serial.print(heartRate);
+          Serial.print(" HRV: "); Serial.print(hrv);
+          Serial.print(" ECG: "); Serial.println(ecgValue);
 
-          // Write values to BLE characteristics
-          heartRateChar.writeValue(heartRate);
-          hrvChar.writeValue(hrv * 100);
-          hrMad10Char.writeValue(hrmad10 * 100);  // Using HRMAD for 10-second window
-          hrMad30Char.writeValue(hrmad30 * 100);  // Using HRMAD for 30-second window
-          hrMad60Char.writeValue(hrmad60 * 100);  // Using HRMAD for 60-second window
-          hrMad60Char.writeValue(ecgValue);
+          // Write values to characteristics - note we're sending raw values now
+          Serial.println("\n--- Write Results ---");
+          Serial.print("Heart Rate Write: "); 
+          Serial.println(heartRateChar.writeValue(float(heartRate)) ? "Success" : "Failed");
+          
+          Serial.print("HRV Write: ");
+          Serial.println(hrvChar.writeValue(float(hrv)) ? "Success" : "Failed");
+          
+          Serial.print("HRMAD10 Write: ");
+          Serial.println(hrMad10Char.writeValue(float(hrmad10)) ? "Success" : "Failed");
+          
+          Serial.print("HRMAD30 Write: ");
+          Serial.println(hrMad30Char.writeValue(float(hrmad30)) ? "Success" : "Failed");
+          
+          Serial.print("HRMAD60 Write: ");
+          Serial.println(hrMad60Char.writeValue(float(hrmad60)) ? "Success" : "Failed");
+          
+          Serial.print("ECG Write: ");
+          Serial.println(ecgChar.writeValue(float(ecgValue)) ? "Success" : "Failed");
+          Serial.println("-------------------\n");
         }
       }
 
-      delay(sampleWindow);  // Sample at 100Hz or 10ms interval
+      delay(sampleWindow);  // 100Hz sampling rate
     }
 
     Serial.print("Disconnected from central: ");
