@@ -56,8 +56,6 @@ void setup() {
   pinMode(loPlusPin, INPUT);
   pinMode(loMinusPin, INPUT);
 
-  while (!Serial);
-
   // Initialize BLE
   if (!BLE.begin()) {
     Serial.println("Starting BLE failed!");
