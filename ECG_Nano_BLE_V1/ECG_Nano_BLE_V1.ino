@@ -23,8 +23,8 @@ BLEFloatCharacteristic leadsChar(LEADS_UUID, BLERead | BLENotify);
 
 // Pin definition
 const int ecgPin = A0; // Analog pin where ECG signal is read
-const int loPlusPin = 9;     // LO+ pin for lead detection on digital pin 9
-const int loMinusPin = 10;   // LO- pin for lead detection on digital pin 10
+const int loPlusPin = 2;     // LO+ pin for lead detection on digital pin 9
+const int loMinusPin = 3;   // LO- pin for lead detection on digital pin 10
 
 
 // Variables for signal processing
