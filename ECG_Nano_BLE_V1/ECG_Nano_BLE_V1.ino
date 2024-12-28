@@ -1,14 +1,16 @@
 #include <Arduino.h>
 #include <ArduinoBLE.h>
 
-#define HEART_SERVICE_UUID        "0000180d-0000-1000-8000-00805f9b34fb"
-#define HEART_RATE_UUID          "00002b90-0000-1000-8000-00805f9b34fb"
-#define HRV_UUID                 "00002b91-0000-1000-8000-00805f9b34fb"
-#define HRMAD10_UUID            "00002b92-0000-1000-8000-00805f9b34fb"
-#define HRMAD30_UUID            "00002b93-0000-1000-8000-00805f9b34fb"
-#define HRMAD60_UUID            "00002b94-0000-1000-8000-00805f9b34fb"
-#define ECG_UUID                "00002b95-0000-1000-8000-00805f9b34fb"
-#define LEADS_UUID                "00002b96-0000-1000-8000-00805f9b34fb"
+#define HEART_SERVICE_UUID "0000180d-0000-1000-8000-00805f9b34fb"
+#define HEART_RATE_UUID "00002b90-0000-1000-8000-00805f9b34fb"
+#define HRV_UUID "00002b91-0000-1000-8000-00805f9b34fb"
+#define HRMAD10_UUID "00002b92-0000-1000-8000-00805f9b34fb"
+#define HRMAD30_UUID "00002b93-0000-1000-8000-00805f9b34fb"
+#define HRMAD60_UUID "00002b94-0000-1000-8000-00805f9b34fb"
+#define ECG_UUID "00002b95-0000-1000-8000-00805f9b34fb"
+#define LEADS_UUID "00002b96-0000-1000-8000-00805f9b34fb"
+#define WEIGHT_UUID "00002b97-0000-1000-8000-00805f9b34fb"
+#define AGE_UUID "00002b98-0000-1000-8000-00805f9b34fb"
 
 BLEService heartService(HEART_SERVICE_UUID);
 
@@ -20,20 +22,25 @@ BLEFloatCharacteristic hrMad30Char(HRMAD30_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic hrMad60Char(HRMAD60_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic ecgChar(ECG_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic leadsChar(LEADS_UUID, BLERead | BLENotify);
+BLEIntCharacteristic weightChar(WEIGHT_UUID, BLERead | BLEWrite | BLENotify);  // New weight characteristic
+BLEIntCharacteristic ageChar(AGE_UUID, BLERead | BLEWrite | BLENotify);          // New age characteristic
 
 // Pin definition
-const int ecgPin = A0; // Analog pin where ECG signal is read
-const int loPlusPin = 2;     // LO+ pin for lead detection on digital pin 9
-const int loMinusPin = 3;   // LO- pin for lead detection on digital pin 10
+const int ecgPin = A0;     // Analog pin where ECG signal is read
+const int loPlusPin = 2;   // LO+ pin for lead detection on digital pin 9
+const int loMinusPin = 3;  // LO- pin for lead detection on digital pin 10
+
+uint32_t age;
+uint32_t weight;
 
 
 // Variables for signal processing
-unsigned long lastBeatTime = 0;   // Stores the time of the last heartbeat
-int beatInterval = 0;             // Time between beats (R-R interval)
-int heartRate = 0;                // Calculated heart rate in bpm
-const int sampleWindow = 10;      // Sample window for analog reads
-int threshold = 652;              // ECG signal threshold to detect R-peak
-const int numRRIntervals = 10;    // Store last 10 R-R intervals for HRV
+unsigned long lastBeatTime = 0;  // Stores the time of the last heartbeat
+int beatInterval = 0;            // Time between beats (R-R interval)
+int heartRate = 0;               // Calculated heart rate in bpm
+const int sampleWindow = 10;     // Sample window for analog reads
+int threshold = 652;             // ECG signal threshold to detect R-peak
+const int numRRIntervals = 10;   // Store last 10 R-R intervals for HRV
 
 int rrIntervals[numRRIntervals];  // Array to store R-R intervals
 int rrIndex = 0;                  // Index for the array
@@ -50,6 +57,12 @@ int hrBuffer60[bufferSize60];
 int index10 = 0, index30 = 0, index60 = 0;
 int bufferCount10 = 0, bufferCount30 = 0, bufferCount60 = 0;
 
+// Variables to store age and weight
+volatile int currentAge = 0;
+volatile float currentWeight = 0.0;
+volatile bool ageUpdated = false;
+volatile bool weightUpdated = false;
+
 void setup() {
   Serial.begin(9600);
   pinMode(ecgPin, INPUT);
@@ -59,7 +72,8 @@ void setup() {
   // Initialize BLE
   if (!BLE.begin()) {
     Serial.println("Starting BLE failed!");
-    while (1);
+    while (1)
+      ;
   }
 
   Serial.println(BLE.address());
@@ -76,6 +90,8 @@ void setup() {
   heartService.addCharacteristic(hrMad60Char);
   heartService.addCharacteristic(ecgChar);
   heartService.addCharacteristic(leadsChar);
+  heartService.addCharacteristic(weightChar);  // Add weight characteristic
+  heartService.addCharacteristic(ageChar);     // Add age characteristic
 
   // Set initial values for characteristics
   heartRateChar.writeValue(0.0);
@@ -85,6 +101,11 @@ void setup() {
   hrMad60Char.writeValue(0.0);
   ecgChar.writeValue(0.0);
   leadsChar.writeValue(0.0);
+  weightChar.writeValue(0.0);  // Initial weight value
+  ageChar.writeValue(0);       // Initial age value
+
+  // ageChar.setEventHandler(BLEWritten, onAgeWritten);
+  // weightChar.setEventHandler(BLEWritten, onWeightWritten);
 
   // Add the service
   BLE.addService(heartService);
@@ -103,26 +124,40 @@ void loop() {
     while (central.connected()) {
       bool leadOffDetected = digitalRead(loPlusPin) == HIGH || digitalRead(loMinusPin) == HIGH;
 
+      if (ageChar.written()) {  // Check if the age characteristic has been written
+        ageChar.readValue(age);
+        Serial.print("Received age: ");
+        Serial.println(age);
+      }
+
+      // Read the weight value directly
+      if (weightChar.written()) {  // Check if the weight characteristic has been written
+        weightChar.readValue(weight);
+        Serial.print("Received weight: ");
+        Serial.println(weight);
+      }
+
       if (leadOffDetected) {
         leadsChar.writeValue(float(1.0));
         continue;
       } else {
         leadsChar.writeValue(float(0.0));
       }
-      
+
       int ecgValue = analogRead(ecgPin);
 
       if (ecgValue > threshold) {
         unsigned long currentTime = millis();
         beatInterval = currentTime - lastBeatTime;
-        
+
+
         if (beatInterval > 300) {
           lastBeatTime = currentTime;
           heartRate = 60000 / beatInterval;
-          
+
           rrIntervals[rrIndex] = beatInterval;
           rrIndex = (rrIndex + 1) % numRRIntervals;
-          
+
           // Update buffers
           updateHRBuffer(hrBuffer10, bufferSize10, index10, bufferCount10, heartRate);
           updateHRBuffer(hrBuffer30, bufferSize30, index30, bufferCount30, heartRate);
@@ -135,27 +170,30 @@ void loop() {
           float hrmad60 = calculateHRMAD(hrBuffer60, bufferCount60);
 
           // Debug print
-          Serial.print("HR: "); Serial.print(heartRate);
-          Serial.print(" HRV: "); Serial.print(hrv);
-          Serial.print(" ECG: "); Serial.println(ecgValue);
+          Serial.print("HR: ");
+          Serial.print(heartRate);
+          Serial.print(" HRV: ");
+          Serial.print(hrv);
+          Serial.print(" ECG: ");
+          Serial.println(ecgValue);
 
           // Write values to characteristics - note we're sending raw values now
           Serial.println("\n--- Write Results ---");
-          Serial.print("Heart Rate Write: "); 
+          Serial.print("Heart Rate Write: ");
           Serial.println(heartRateChar.writeValue(float(heartRate)) ? "Success" : "Failed");
-          
+
           Serial.print("HRV Write: ");
           Serial.println(hrvChar.writeValue(float(hrv)) ? "Success" : "Failed");
-          
+
           Serial.print("HRMAD10 Write: ");
           Serial.println(hrMad10Char.writeValue(float(hrmad10)) ? "Success" : "Failed");
-          
+
           Serial.print("HRMAD30 Write: ");
           Serial.println(hrMad30Char.writeValue(float(hrmad30)) ? "Success" : "Failed");
-          
+
           Serial.print("HRMAD60 Write: ");
           Serial.println(hrMad60Char.writeValue(float(hrmad60)) ? "Success" : "Failed");
-          
+
           Serial.print("ECG Write: ");
           Serial.println(ecgChar.writeValue(float(ecgValue)) ? "Success" : "Failed");
           Serial.println("-------------------\n");
