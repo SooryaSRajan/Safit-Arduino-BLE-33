@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <ArduinoBLE.h>
+#include "panic_detector.h"
+
 
 #define HEART_SERVICE_UUID "0000180d-0000-1000-8000-00805f9b34fb"
 #define HEART_RATE_UUID "00002b90-0000-1000-8000-00805f9b34fb"
@@ -11,6 +13,7 @@
 #define LEADS_UUID "00002b96-0000-1000-8000-00805f9b34fb"
 #define WEIGHT_UUID "00002b97-0000-1000-8000-00805f9b34fb"
 #define AGE_UUID "00002b98-0000-1000-8000-00805f9b34fb"
+#define PANIC_UUID "00002b99-0000-1000-8000-00805f9b34fb"
 
 BLEService heartService(HEART_SERVICE_UUID);
 
@@ -23,12 +26,15 @@ BLEFloatCharacteristic hrMad60Char(HRMAD60_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic ecgChar(ECG_UUID, BLERead | BLENotify);
 BLEFloatCharacteristic leadsChar(LEADS_UUID, BLERead | BLENotify);
 BLEIntCharacteristic weightChar(WEIGHT_UUID, BLERead | BLEWrite | BLENotify);  // New weight characteristic
-BLEIntCharacteristic ageChar(AGE_UUID, BLERead | BLEWrite | BLENotify);          // New age characteristic
+BLEIntCharacteristic ageChar(AGE_UUID, BLERead | BLEWrite | BLENotify);        // New age characteristic
+BLEFloatCharacteristic panicChar(PANIC_UUID, BLERead | BLENotify);
 
 // Pin definition
 const int ecgPin = A0;     // Analog pin where ECG signal is read
 const int loPlusPin = 2;   // LO+ pin for lead detection on digital pin 9
 const int loMinusPin = 3;  // LO- pin for lead detection on digital pin 10
+
+int panicFrequency = 0;
 
 // age and weight for ML model
 uint32_t age;
@@ -92,6 +98,7 @@ void setup() {
   heartService.addCharacteristic(leadsChar);
   heartService.addCharacteristic(weightChar);  // Add weight characteristic
   heartService.addCharacteristic(ageChar);     // Add age characteristic
+  heartService.addCharacteristic(panicChar);   // Add age characteristic
 
   // Set initial values for characteristics
   heartRateChar.writeValue(0.0);
@@ -103,6 +110,7 @@ void setup() {
   leadsChar.writeValue(0.0);
   weightChar.writeValue(0.0);  // Initial weight value
   ageChar.writeValue(0);       // Initial age value
+  panicChar.writeValue(0.0);
 
   // ageChar.setEventHandler(BLEWritten, onAgeWritten);
   // weightChar.setEventHandler(BLEWritten, onWeightWritten);
@@ -197,6 +205,23 @@ void loop() {
           Serial.print("ECG Write: ");
           Serial.println(ecgChar.writeValue(float(ecgValue)) ? "Success" : "Failed");
           Serial.println("-------------------\n");
+
+          bool is_panic = predict_panic(age, weight, heartRate, hrv, hrmad10, hrmad30, hrmad60);
+
+          if (!is_panic) {
+            panicFrequency = 0;
+          } else {
+            panicFrequency++;
+          }
+
+          if (panicFrequency >= 25) {
+            Serial.print("Is panic: ");
+            Serial.println(is_panic ? "YES" : "NO");
+            Serial.println(panicChar.writeValue(float(1.0)) ? "Panic write Success" : "Panic write Failed");
+          } else {
+            Serial.println(panicChar.writeValue(float(0.0)) ? "Panic write Success" : "Panic write Failed");
+          }
+          
         }
       }
 
