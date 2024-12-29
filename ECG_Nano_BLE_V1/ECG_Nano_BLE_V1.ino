@@ -30,9 +30,9 @@ const int ecgPin = A0;     // Analog pin where ECG signal is read
 const int loPlusPin = 2;   // LO+ pin for lead detection on digital pin 9
 const int loMinusPin = 3;  // LO- pin for lead detection on digital pin 10
 
+// age and weight for ML model
 uint32_t age;
 uint32_t weight;
-
 
 // Variables for signal processing
 unsigned long lastBeatTime = 0;  // Stores the time of the last heartbeat
